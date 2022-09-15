@@ -48,6 +48,9 @@ int visible = 1, running = 1, errorTemp=0, manual=0;
 int fansLevel = AUTO;
 int sleepTime = 120, criticalTemp = 55, safeTemp = 50, autoSpeedValue = 7;
 gint timeout;
+// this is messy, but it makes life easier to keep fan speed string available - we don't need it
+// but adding it here for now, so we know whether or not our timeout handling is correct
+char *fan_speed = NULL;
 
 /****** FUNCTIONS *******/
 // when program is closed, turns fans to auto and write that in terminal
@@ -66,6 +69,8 @@ void hide_window(GtkStatusIcon *status_icon, gpointer user_data);
 void tray_icon_on_menu(GtkStatusIcon *status_icon, guint button, guint activate_time, gpointer user_data);
 // creates tray icon
 static GtkStatusIcon *create_tray_icon();
+
+int manual_temp(gpointer data);
 
 //------------------------------------ MAIN ---------------------------------------------//
 int main (int argc, char *argv[]){
@@ -130,6 +135,15 @@ int main (int argc, char *argv[]){
     timeout = g_timeout_add_seconds(sleepTime,fans,NULL);
 
     gtk_main ();
+
+    // stop timeout
+    if(running == 1) {
+        gtk_timeout_remove(timeout);
+    }
+    // clear memory
+    if (fan_speed != NULL) {
+        free(fan_speed);
+    }
     
     return 0;
 }
@@ -306,13 +320,59 @@ void change_speed(int speed){
         case 8: strcpy(speedString,"full-speed"); break;
         default: sprintf(speedString,"%d",speed);
     }
+
+    // getting time
+    // writing CPU temperature, and time when it's checked
     sprintf(tmpString,"echo level %s > /proc/acpi/ibm/fan",speedString);
     system(tmpString);
     sprintf(tmpString,"Fans level - %s",speedString);
-    gtk_label_set_text(level,tmpString);
     
     sprintf(tmpString,"ThinkPad Fan Control .:: level - %s ::.",speedString);
     gtk_status_icon_set_tooltip(tray_icon, tmpString);
     
     printf("** Speed level changed to %s **\n",speedString);
+    // allocate fan_speed string for timeout callback
+    if (fan_speed != NULL) {
+        free(fan_speed);
+    }
+    fan_speed = calloc(strlen(speedString), sizeof *fan_speed);
+    if (fan_speed == NULL) {
+        gtk_label_set_text(txtLog,"FAILED TO ALLOCATE MEMORY");
+        return;
+    }
+    strncpy(fan_speed, speedString, strlen(speedString));
+    // set interval
+    if(running == 1) {
+        gtk_timeout_remove(timeout);
+        timeout = g_timeout_add_seconds(sleepTime,manual_temp,fan_speed);
+        return;
+    }
+    timeout = g_timeout_add_seconds(sleepTime,manual_temp,fan_speed);
+    running = 1;
+}
+
+int manual_temp(gpointer data) {
+    char tmpString[160];
+    char message[80] = {'\0'};
+    FILE *tempInput, *sysIn;
+    int temp;
+    const char *speedString = data;
+    tempInput = fopen("/proc/acpi/ibm/thermal","r");
+    if(tempInput == NULL){
+        gtk_label_set_text(txtLog,"YOU ARE NOT RUNNING KERNEL WITH THINKPAD PATCH!");
+        return FALSE;
+    }
+    fscanf(tempInput,"temperatures:	%d",&temp);
+    fclose(tempInput);
+    sysIn = popen("date '+%H:%M:%S'","r");
+    fgets(tmpString,9,sysIn);
+    pclose(sysIn);
+    sprintf(message,"Temp: %dC, Checked at %s",temp,tmpString);
+    gtk_statusbar_push(statusbar,0,"Manual control is active!");
+    sprintf(tmpString, "Manual control is active! - %s", message);
+    // push temp to status bar
+    gtk_statusbar_push(statusbar,0,tmpString);
+    sprintf(tmpString,"Fans level - %s\n%s",speedString, message);
+    gtk_label_set_text(level,tmpString);
+    return TRUE;
 }
