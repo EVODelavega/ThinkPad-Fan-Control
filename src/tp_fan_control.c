@@ -304,8 +304,8 @@ void manual_change (){
         running = 0;
     }
 
-    change_speed(speed);
     manual = 1;
+    change_speed(speed);
     gtk_label_set_text(txtLog,"");
     gtk_statusbar_push(statusbar,0,"Manual control is active!");
 }
@@ -334,6 +334,9 @@ void change_speed(int speed){
     // allocate fan_speed string for timeout callback
     if (fan_speed != NULL) {
         free(fan_speed);
+    }
+    if (manual == 0) {
+        return;
     }
     fan_speed = calloc(strlen(speedString), sizeof *fan_speed);
     if (fan_speed == NULL) {
